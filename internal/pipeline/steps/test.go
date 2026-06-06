@@ -1,11 +1,15 @@
 package steps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
@@ -14,6 +18,15 @@ import (
 type TestStep struct{}
 
 func (s *TestStep) Name() types.StepName { return types.StepTest }
+
+func gitIgnoresPath(ctx context.Context, workDir, target string) bool {
+	rel, err := filepath.Rel(workDir, target)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return false
+	}
+	_, err = git.Run(ctx, workDir, "check-ignore", "--quiet", "--", filepath.ToSlash(rel))
+	return err == nil
+}
 
 func (s *TestStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, error) {
 	ctx := sctx.Ctx
@@ -103,7 +116,12 @@ Previous test findings to address:
 
 	useEvidenceAgent := testCmd == "" || cleanedUserIntent(sctx) != ""
 	if useEvidenceAgent {
-		evidenceDir := testEvidenceDir(sctx.Run.ID)
+		evidenceLocation := resolveTestEvidenceLocation(sctx.WorkDir, sctx.Run.Branch, sctx.Run.ID, sctx.Config.Test.Evidence)
+		evidenceDir := evidenceLocation.Dir
+		if evidenceLocation.StoreInRepo && gitIgnoresPath(ctx, sctx.WorkDir, evidenceDir) {
+			evidenceLocation = testEvidenceLocation{Dir: testEvidenceDir(sctx.Run.ID)}
+			evidenceDir = evidenceLocation.Dir
+		}
 		if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
 			return nil, fmt.Errorf("create test evidence dir: %w", err)
 		}
@@ -113,6 +131,10 @@ Previous test findings to address:
 			sctx.Log("user intent available, asking agent to gather test evidence...")
 		}
 		reassessHistory := executionContextPromptSection() + roundHistoryPromptSection(sctx) + userIntentPromptSection(sctx)
+		evidenceGuidance := fmt.Sprintf("- Write new evidence files into this temporary evidence directory: %s", evidenceDir)
+		if evidenceLocation.StoreInRepo {
+			evidenceGuidance = fmt.Sprintf("- Write new evidence files into this in-repo evidence directory; it is committed and pushed automatically, so artifacts render directly on the PR: %s", evidenceDir)
+		}
 		configuredTestCommand := ""
 		if testCmd != "" {
 			configuredTestCommand = fmt.Sprintf("\nConfigured test command already ran successfully as baseline: `%s`\n", testCmd)
@@ -136,7 +158,7 @@ Task:
 - Prefer screenshots, images, videos, GIFs, or rendered HTML artifacts that show the actual end-user surface.
 - DOM snapshots, selector assertions, and text-only render summaries are not substitutes for visual evidence when a rendered surface is available.
 - If a UI-facing change has no screenshot, image, video, GIF, or rendered HTML artifact, state why in testing_summary.
-- Write new evidence files into this temporary evidence directory: %s
+%s
 - Do not move, commit, or modify source files only to make evidence linkable. Record local evidence file paths exactly where you created them.
 - Only use command output as an artifact when that output directly demonstrates the end-user experience or requested behavior. Generic pass/fail, coverage, or clean-worktree output is not sufficient evidence.
 - Look for existing tests that would generate sufficient evidence. If they exist, run the smallest relevant set.
@@ -164,7 +186,7 @@ Rules:
 				baseSHA,
 				sctx.Run.HeadSHA,
 				configuredTestCommand,
-				evidenceDir,
+				evidenceGuidance,
 				reassessHistory,
 			),
 			CWD:        sctx.WorkDir,
