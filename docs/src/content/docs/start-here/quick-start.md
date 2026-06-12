@@ -48,7 +48,7 @@ $ no-mistakes init
     repo  /Users/you/src/my-repo
     gate  no-mistakes → /Users/you/.no-mistakes/repos/abc123def456.git
   remote  git@github.com:you/my-repo.git
-   skill  /no-mistakes installed for agents
+   skill  /no-mistakes installed for agents at user level
 
   Push through the gate with:
   git push no-mistakes <branch>
@@ -86,7 +86,7 @@ The TUI shows each step's progress, streams agent output, and pauses for your ap
 ## Or let your agent run the gate
 
 If you are already working inside a coding agent like Claude Code, you don't have to switch to the terminal at all.
-`no-mistakes init` installed a `/no-mistakes` skill into the repo, so you can ask the agent to do a task and gate it:
+`no-mistakes init` installed the `/no-mistakes` skill at user level, available in every repo, so you can ask the agent to do a task and gate it:
 
 ```
 /no-mistakes add a --json flag to the status command
